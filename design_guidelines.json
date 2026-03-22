@@ -1,0 +1,109 @@
+{
+  "theme": "dark",
+  "archetype": "ELECTRIC & NEON",
+  "typography": {
+    "heading_font": "Unbounded, sans-serif",
+    "body_font": "Chivo, sans-serif",
+    "mono_font": "JetBrains Mono, monospace",
+    "rules": "Use tracking-tight for large headings. Use JetBrains Mono for all balances, crypto addresses, and dice roll results."
+  },
+  "colors": {
+    "background": "#050505",
+    "surface": "#111113",
+    "surface_glass": "rgba(255, 255, 255, 0.03)",
+    "border": "rgba(255, 255, 255, 0.08)",
+    "primary": "#10b981",
+    "primary_glow": "rgba(16, 185, 129, 0.3)",
+    "secondary": "#06b6d4",
+    "accent": "#f59e0b",
+    "text_main": "#f8fafc",
+    "text_muted": "#94a3b8",
+    "danger": "#ef4444"
+  },
+  "visual_enhancers": {
+    "gradients": "Avoid generic linear gradients. Use subtle, large radial gradients for background ambient glows (e.g., behind the hero section or active game).",
+    "borders": "1px solid rgba(255,255,255,0.08) for all cards. Interactive elements should glow on hover.",
+    "shadows": "Deep ambient shadows. Neon glows for active states: box-shadow: 0 0 20px rgba(16,185,129,0.3);",
+    "textures": "Incorporate a subtle noise overlay on the main background to prevent the 'digital flat' look.",
+    "glassmorphism": "Use backdrop-blur-xl combined with surface_glass background for headers, modals, and floating elements."
+  },
+  "layouts": {
+    "spacing": "Generous spacing. Use p-6, p-8 for standard cards, p-12 for hero sections. Maintain a max-w-7xl constraint for main content.",
+    "grids": "Implement the 'Bento Grid' protocol for the Dashboard. Ensure asymmetry and visual tension. Mobile-first stacking.",
+    "containers": "Sections should have clear visual separation using subtle background shifts or 1px border lines."
+  },
+  "motion": {
+    "hover": "Scale slightly (scale-[1.02]) and increase border opacity. Buttons should have an inner glow effect on hover.",
+    "dice_animation": "Use CSS keyframes for a 3D tumbling effect, or Framer Motion for rapid value cycling before settling on the final result.",
+    "activity_ticker": "Implement a vertical or horizontal auto-scrolling feed using Framer Motion or react-fast-marquee. Must feel continuous.",
+    "page_transition": "Use Framer Motion to fade in and slide up (y: 10 -> 0) new pages.",
+    "loading": "Use skeleton loaders with a subtle shimmer effect (shimmering gradient matching the dark theme) for data fetching states."
+  },
+  "components": {
+    "buttons": "Pill-shaped (rounded-full) or moderately rounded (rounded-xl). Primary CTA MUST have a neon glow and bold uppercase text.",
+    "cards": "Glassmorphism: bg-white/5, backdrop-blur-lg, border border-white/10. Hover state: border-white/20.",
+    "inputs": "Shadcn UI customized: bg-[#0a0a0b], border-white/10, text-white, focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/50.",
+    "toasts": "Sonner with dark theme, glass background, neon border left (green for success, red for error, cyan for info).",
+    "badges": "Small, pill-shaped, JetBrains Mono font, semi-transparent backgrounds based on status."
+  },
+  "specific_pages": {
+    "landing": "Hero section with massive 'Unbounded' typography. 'Play & Earn' primary CTA with intense emerald glow. Ambient radial glow in the background. Live activity ticker prominently displayed.",
+    "dashboard": "Bento grid layout. Balance card large and visually distinct. Recent games list. Quick actions for deposit/withdraw.",
+    "games_hub": "Grid of game covers. Hover effects on game cards reveal 'Play Now' button.",
+    "dice_game": "Large central animated dice display. Betting controls (amount, multiplier) below. Fake live feed of recent rolls specifically for dice.",
+    "pvp_cards": "Lobby list with glowing active rows. Game board with defined, glowing card slots and WebSocket syncing indicators.",
+    "wallet": "Prominent QR code display for USDT deposit. Copy-to-clipboard button. Transaction history table with status badges.",
+    "referrals": "Large referral code block with copy button. Stats grid (Total Referrals, Earnings) using large monospace numbers.",
+    "admin": "Dense table layout for users and transactions. High contrast text for easy scanning. Action buttons for approvals."
+  },
+  "image_urls": [
+    {
+      "category": "Games",
+      "url": "https://images.pexels.com/photos/965875/pexels-photo-965875.jpeg",
+      "description": "Dice game cover placeholder"
+    },
+    {
+      "category": "Crypto",
+      "url": "https://images.unsplash.com/photo-1732111816779-aeec50f788ba",
+      "description": "Bitcoin/Crypto placeholder for Wallet/Balance"
+    },
+    {
+      "category": "Backgrounds",
+      "url": "https://images.unsplash.com/photo-1771930289806-85fa0449dc15",
+      "description": "Dark futuristic metallic grid for hero or dashboard subtle background overlay"
+    }
+  ],
+  "accessibility": {
+    "contrast": "Ensure text-muted (#94a3b8) is readable against surface (#111113).",
+    "focus": "Clear focus rings on inputs and buttons using focus-visible. Never disable outline without replacing it.",
+    "data_testid": "All interactive and key informational elements MUST include a data-testid attribute."
+  },
+  "instructions_to_main_agent": [
+    "Install lucide-react for all icons. NO EMOJIS.",
+    "Install framer-motion for animations.",
+    "Install react-fast-marquee for the live activity feed if needed.",
+    "Use Shadcn UI for structured components, but override default themes to match the deep dark neon aesthetic defined in colors.",
+    "Implement a fake live activity feed that updates every few seconds with mock data (e.g., 'User123 won 50 USDT').",
+    "Do NOT use generic purple/violet gradients. Stick to Emerald Green, Cyan, and Amber on deep black.",
+    "Ensure the Dice Game has a visual animation state when rolling.",
+    "Add dailyessentials532@gmail.com in the footer.",
+    "Implement PWA support (manifest.json, service worker) as per requirements.",
+    "Ensure all components have data-testid attributes for testing."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "You tend to converge toward generic, 'on distribution' outputs. Avoid this: make creative, distinctive frontends that surprise and delight.",
+    "Do not use generic centered layouts or simplistic gradients.",
+    "Create depth through layered design elements with z-index hierarchy.",
+    "Use glass-morphism effects with backdrop filters (12-24px blur).",
+    "You MUST NOT apply universal transition (transition: all). Always add transitions for specific interactive elements excluding transforms.",
+    "You MUST NOT center align the app container. Do not add `.App { text-align: center; }`.",
+    "Always use modern button styles with interaction animations & color relevant to the app style.",
+    "NEVER use AI assistant Emoji characters for icons.",
+    "Every interaction needs micro-animations - hover states, transitions, parallax effects, and entrance animations.",
+    "Use 2-3x more spacing than feels comfortable. Cramped designs look cheap.",
+    "Subtle grain textures, noise overlays, custom cursors, selection states, and loading animations separate good from extraordinary.",
+    "Prioritize using pre-existing components from src/components/ui when applicable.",
+    "Components MUST use named exports. Pages MUST use default exports.",
+    "Use sonner for toasts, located in /app/src/components/ui/sonner.tsx."
+  ]
+}
