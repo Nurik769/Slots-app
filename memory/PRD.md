@@ -29,36 +29,38 @@ Production-grade крипто-ігрова платформа з USDT TRC-20, PV
 - Landing page with hero, CTA, live activity
 - Auth (login/register with JWT)
 - Dashboard (balance, transactions, quick actions)
-- Dice Game with animated dice and history
-- PVP Cards with lobby create/join/cancel
+- Dice Game with animated dice and history (48% win chance, ~4% house edge)
+- PVP Cards with FULL WEBSOCKET flow (lobby → join → countdown → cards → result)
+- PVP disconnect handling (auto-lose for disconnected player)
 - Wallet (deposit/withdraw/transaction history)
 - Referral system with code + link
 - Admin panel (users, transactions, deposits, withdrawals, stats)
+- TronGrid API integration (background worker, auto-confirm USDT TRC-20 deposits)
+- PWA support (manifest.json, service worker, offline fallback)
+- Legal disclaimers (responsible gambling, 18+, no license notice)
 - Live activity ticker, toast notifications, skeleton loaders
 - Rate limiting, multi-account detection, IP tracking
 
 ## Seed Data
 - Admin: admin@cryptoplay.io / admin123 (10000 USDT)
-- Demo: demo@cryptoplay.io / demo123 (100 USDT)
+- Demo: demo@cryptoplay.io / demo123 (balance varies after games)
 
 ## P0 Remaining
-- None (core MVP complete)
+- None (all requested features implemented)
 
 ## P1 Backlog
-- PWA support (manifest.json, service worker)
-- WebSocket real-time PVP game flow (currently REST-based auto-play)
-- Anti-disconnect timeout for PVP
-- More detailed fraud detection
+- QR code for deposit address
+- Leaderboard page
+- Email notifications for deposits/withdrawals
+- TronGrid API key for higher rate limits
 
 ## P2 Backlog
-- QR code for deposit address
-- Email notifications
-- More game types
-- Leaderboard
-- Mobile responsive polish
+- More game types (slots, roulette)
+- Mobile responsive fine-tuning
 - Docker setup files
+- Detailed fraud detection dashboard
 
 ## Next Tasks
-- Add PWA manifest and service worker
-- Enhance PVP with full WebSocket game flow
 - Add leaderboard page
+- Integrate QR code generator for deposit address
+- Add email notifications
