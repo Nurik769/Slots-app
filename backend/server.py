@@ -248,6 +248,18 @@ class DicePlayInput(BaseModel):
 class PvpCreateInput(BaseModel):
     bet_amount: float
 
+class SlotsPlayInput(BaseModel):
+    bet_amount: float
+
+class RoulettePlayInput(BaseModel):
+    bet_amount: float
+    bet_type: str  # red, black, green, odd, even, number
+    bet_number: Optional[int] = None
+
+class AdminBalanceInput(BaseModel):
+    amount: float
+    reason: str
+
 # ========== HELPERS ==========
 def generate_referral_code():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
@@ -274,6 +286,40 @@ def decode_token(token: str) -> dict:
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+# ========== STREAK SYSTEM ==========
+def get_streak_multiplier(streak: int) -> float:
+    if streak >= 5:
+        return 1.5
+    if streak >= 3:
+        return 1.2
+    if streak >= 2:
+        return 1.1
+    return 1.0
+
+def get_daily_bonus_amount(daily_streak: int) -> float:
+    if daily_streak >= 7:
+        return 2.0
+    if daily_streak >= 5:
+        return 1.0
+    if daily_streak >= 3:
+        return 0.75
+    return 0.50
+
+# ========== SLOTS CONFIG (RTP ~95%) ==========
+SLOT_SYMBOLS = ["diamond", "seven", "star", "bell", "cherry", "lemon", "orange"]
+SLOT_OUTCOMES = [
+    {"type": "jackpot", "prob": 0.001, "symbol": "diamond", "mult": 50},
+    {"type": "big_win", "prob": 0.01, "symbol": "seven", "mult": 10},
+    {"type": "medium", "prob": 0.04, "symbol": "star", "mult": 5},
+    {"type": "small", "prob": 0.15, "symbol": "cherry", "mult": 2},
+    {"type": "mini", "prob": 0.25, "symbol": None, "mult": 1.2},
+    {"type": "loss", "prob": 0.549, "symbol": None, "mult": 0},
+]
+
+# ========== ROULETTE CONFIG ==========
+RED_NUMBERS = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]
+BLACK_NUMBERS = [2, 4, 6, 8, 10, 11, 13, 15, 17, 20, 22, 24, 26, 28, 29, 31, 33, 35]
 
 # ========== AUTH DEPENDENCY ==========
 async def get_current_user(request: Request):
@@ -499,7 +545,7 @@ async def play_dice(input: DicePlayInput, user=Depends(get_current_user)):
 
     game_id = str(uuid.uuid4())
 
-    # Server-authoritative: determine outcome first (10% win)
+    # Server-authoritative: determine outcome first (48% win)
     is_win = random.random() < DICE_WIN_CHANCE
 
     if is_win:
@@ -509,12 +555,25 @@ async def play_dice(input: DicePlayInput, user=Depends(get_current_user)):
         bot_dice = random.randint(4, 6)
         player_dice = random.randint(1, bot_dice - 1) if bot_dice > 1 else 1
 
-    win_amount = input.bet_amount * 2 if is_win else 0
+    # Streak system
+    current_streak = fresh.get("win_streak", 0)
+    streak_mult = 1.0
+    new_streak = 0
+
+    if is_win:
+        new_streak = current_streak + 1
+        streak_mult = get_streak_multiplier(new_streak)
+        base_win = input.bet_amount * 2
+        win_amount = round(base_win * streak_mult, 2)
+    else:
+        new_streak = 0
+        win_amount = 0
+
     balance_change = win_amount - input.bet_amount
 
     result = await db.users.find_one_and_update(
         {"id": user["id"], "balance": {"$gte": input.bet_amount}},
-        {"$inc": {"balance": balance_change}},
+        {"$inc": {"balance": balance_change}, "$set": {"win_streak": new_streak}},
         return_document=True,
         projection={"_id": 0}
     )
@@ -549,7 +608,8 @@ async def play_dice(input: DicePlayInput, user=Depends(get_current_user)):
     return {
         "game_id": game_id, "player_dice": player_dice, "bot_dice": bot_dice,
         "is_win": is_win, "bet_amount": input.bet_amount,
-        "win_amount": win_amount, "new_balance": new_balance
+        "win_amount": win_amount, "new_balance": new_balance,
+        "win_streak": new_streak, "streak_multiplier": streak_mult
     }
 
 @api_router.get("/games/dice/history")
@@ -667,6 +727,263 @@ async def cancel_pvp_lobby(lobby_id: str, user=Depends(get_current_user)):
     await db.pvp_lobbies.update_one({"id": lobby_id}, {"$set": {"status": "cancelled"}})
 
     return {"status": "cancelled"}
+
+# ========== SLOTS GAME (RTP ~95%) ==========
+@api_router.post("/games/slots/play")
+async def play_slots(input: SlotsPlayInput, user=Depends(get_current_user)):
+    if input.bet_amount < MIN_BET:
+        raise HTTPException(status_code=400, detail=f"Minimum bet is {MIN_BET} USDT")
+
+    fresh = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    if fresh["balance"] < input.bet_amount:
+        raise HTTPException(status_code=400, detail="Insufficient balance")
+
+    game_id = str(uuid.uuid4())
+
+    # Determine outcome (server-authoritative)
+    roll = random.random()
+    cumulative = 0
+    outcome = SLOT_OUTCOMES[-1]
+    for o in SLOT_OUTCOMES:
+        cumulative += o["prob"]
+        if roll < cumulative:
+            outcome = o
+            break
+
+    # Generate reels based on outcome
+    if outcome["symbol"]:
+        # 3 matching symbols
+        main_symbol = outcome["symbol"]
+        reels = [main_symbol, main_symbol, main_symbol]
+    elif outcome["mult"] > 0:
+        # 2 matching (mini win)
+        sym = random.choice(SLOT_SYMBOLS[3:])
+        other = random.choice([s for s in SLOT_SYMBOLS if s != sym])
+        pos = random.randint(0, 2)
+        reels = [sym, sym, sym]
+        reels[pos] = other
+    else:
+        # Loss - generate non-matching
+        reels = random.sample(SLOT_SYMBOLS, 3)
+        while reels[0] == reels[1] == reels[2]:
+            reels = random.sample(SLOT_SYMBOLS, 3)
+        # Near-miss effect (30% of losses)
+        if random.random() < 0.3:
+            sym = random.choice(SLOT_SYMBOLS[:4])
+            pos = random.randint(0, 2)
+            reels = [sym, sym, sym]
+            reels[pos] = random.choice([s for s in SLOT_SYMBOLS if s != sym])
+
+    multiplier = outcome["mult"]
+    is_win = multiplier > 0
+    win_amount = round(input.bet_amount * multiplier, 2) if is_win else 0
+
+    # Streak
+    current_streak = fresh.get("win_streak", 0)
+    if is_win and multiplier >= 2:
+        new_streak = current_streak + 1
+        streak_mult = get_streak_multiplier(new_streak)
+        win_amount = round(win_amount * streak_mult, 2)
+    else:
+        new_streak = 0 if not is_win else current_streak
+        streak_mult = 1.0
+
+    balance_change = win_amount - input.bet_amount
+
+    result = await db.users.find_one_and_update(
+        {"id": user["id"], "balance": {"$gte": input.bet_amount}},
+        {"$inc": {"balance": balance_change}, "$set": {"win_streak": new_streak}},
+        return_document=True, projection={"_id": 0}
+    )
+    if not result:
+        raise HTTPException(status_code=400, detail="Insufficient balance")
+
+    await db.transactions.insert_one({
+        "id": str(uuid.uuid4()), "user_id": user["id"], "type": "bet",
+        "amount": input.bet_amount, "status": "completed",
+        "details": {"game_id": game_id, "game": "slots"},
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+
+    if is_win:
+        await db.transactions.insert_one({
+            "id": str(uuid.uuid4()), "user_id": user["id"], "type": "win",
+            "amount": win_amount, "status": "completed",
+            "details": {"game_id": game_id, "game": "slots"},
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
+
+    await db.games.insert_one({
+        "id": game_id, "type": "slots", "user_id": user["id"],
+        "username": user["username"], "bet_amount": input.bet_amount,
+        "reels": reels, "outcome_type": outcome["type"],
+        "multiplier": multiplier, "is_win": is_win,
+        "win_amount": win_amount,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+
+    return {
+        "game_id": game_id, "reels": reels,
+        "outcome_type": outcome["type"], "multiplier": multiplier,
+        "is_win": is_win, "bet_amount": input.bet_amount,
+        "win_amount": win_amount, "new_balance": result["balance"],
+        "win_streak": new_streak, "streak_multiplier": streak_mult,
+        "is_jackpot": outcome["type"] == "jackpot",
+        "is_big_win": outcome["type"] in ("jackpot", "big_win")
+    }
+
+# ========== ROULETTE GAME ==========
+@api_router.post("/games/roulette/play")
+async def play_roulette(input: RoulettePlayInput, user=Depends(get_current_user)):
+    if input.bet_amount < MIN_BET:
+        raise HTTPException(status_code=400, detail=f"Minimum bet is {MIN_BET} USDT")
+
+    valid_types = ["red", "black", "green", "odd", "even", "number"]
+    if input.bet_type not in valid_types:
+        raise HTTPException(status_code=400, detail="Invalid bet type")
+    if input.bet_type == "number" and (input.bet_number is None or input.bet_number < 0 or input.bet_number > 36):
+        raise HTTPException(status_code=400, detail="Invalid number (0-36)")
+
+    fresh = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    if fresh["balance"] < input.bet_amount:
+        raise HTTPException(status_code=400, detail="Insufficient balance")
+
+    game_id = str(uuid.uuid4())
+
+    # Server determines result
+    result_number = random.randint(0, 36)
+    result_color = "green" if result_number == 0 else ("red" if result_number in RED_NUMBERS else "black")
+
+    # Determine win
+    is_win = False
+    multiplier = 0
+    if input.bet_type == "red" and result_color == "red":
+        is_win, multiplier = True, 2
+    elif input.bet_type == "black" and result_color == "black":
+        is_win, multiplier = True, 2
+    elif input.bet_type == "green" and result_number == 0:
+        is_win, multiplier = True, 36
+    elif input.bet_type == "odd" and result_number > 0 and result_number % 2 == 1:
+        is_win, multiplier = True, 2
+    elif input.bet_type == "even" and result_number > 0 and result_number % 2 == 0:
+        is_win, multiplier = True, 2
+    elif input.bet_type == "number" and result_number == input.bet_number:
+        is_win, multiplier = True, 36
+
+    win_amount = round(input.bet_amount * multiplier, 2) if is_win else 0
+
+    # Streak
+    current_streak = fresh.get("win_streak", 0)
+    if is_win:
+        new_streak = current_streak + 1
+        streak_mult = get_streak_multiplier(new_streak)
+        win_amount = round(win_amount * streak_mult, 2)
+    else:
+        new_streak = 0
+        streak_mult = 1.0
+
+    balance_change = win_amount - input.bet_amount
+
+    db_result = await db.users.find_one_and_update(
+        {"id": user["id"], "balance": {"$gte": input.bet_amount}},
+        {"$inc": {"balance": balance_change}, "$set": {"win_streak": new_streak}},
+        return_document=True, projection={"_id": 0}
+    )
+    if not db_result:
+        raise HTTPException(status_code=400, detail="Insufficient balance")
+
+    await db.transactions.insert_one({
+        "id": str(uuid.uuid4()), "user_id": user["id"], "type": "bet",
+        "amount": input.bet_amount, "status": "completed",
+        "details": {"game_id": game_id, "game": "roulette"},
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+
+    if is_win:
+        await db.transactions.insert_one({
+            "id": str(uuid.uuid4()), "user_id": user["id"], "type": "win",
+            "amount": win_amount, "status": "completed",
+            "details": {"game_id": game_id, "game": "roulette"},
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
+
+    await db.games.insert_one({
+        "id": game_id, "type": "roulette", "user_id": user["id"],
+        "username": user["username"], "bet_amount": input.bet_amount,
+        "bet_type": input.bet_type, "bet_number": input.bet_number,
+        "result_number": result_number, "result_color": result_color,
+        "multiplier": multiplier, "is_win": is_win,
+        "win_amount": win_amount,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+
+    return {
+        "game_id": game_id, "result_number": result_number,
+        "result_color": result_color, "bet_type": input.bet_type,
+        "is_win": is_win, "multiplier": multiplier,
+        "bet_amount": input.bet_amount, "win_amount": win_amount,
+        "new_balance": db_result["balance"],
+        "win_streak": new_streak, "streak_multiplier": streak_mult
+    }
+
+# ========== DAILY BONUS ==========
+@api_router.get("/daily-bonus/status")
+async def daily_bonus_status(user=Depends(get_current_user)):
+    fresh = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    last_claim = fresh.get("last_daily_claim")
+    daily_streak = fresh.get("daily_streak", 0)
+    can_claim = True
+    next_claim = None
+
+    if last_claim:
+        last_dt = datetime.fromisoformat(last_claim)
+        next_dt = last_dt + timedelta(hours=24)
+        now = datetime.now(timezone.utc)
+        if now < next_dt:
+            can_claim = False
+            next_claim = next_dt.isoformat()
+        elif now > last_dt + timedelta(hours=48):
+            daily_streak = 0
+
+    bonus_amount = get_daily_bonus_amount(daily_streak + 1 if can_claim else daily_streak)
+
+    return {
+        "can_claim": can_claim,
+        "next_claim": next_claim,
+        "daily_streak": daily_streak,
+        "bonus_amount": bonus_amount
+    }
+
+@api_router.post("/daily-bonus/claim")
+async def claim_daily_bonus(user=Depends(get_current_user)):
+    fresh = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    last_claim = fresh.get("last_daily_claim")
+    daily_streak = fresh.get("daily_streak", 0)
+    now = datetime.now(timezone.utc)
+
+    if last_claim:
+        last_dt = datetime.fromisoformat(last_claim)
+        if now < last_dt + timedelta(hours=24):
+            raise HTTPException(status_code=400, detail="Already claimed today")
+        if now > last_dt + timedelta(hours=48):
+            daily_streak = 0
+
+    new_streak = daily_streak + 1
+    bonus = get_daily_bonus_amount(new_streak)
+
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$inc": {"balance": bonus}, "$set": {"last_daily_claim": now.isoformat(), "daily_streak": new_streak}}
+    )
+
+    await db.transactions.insert_one({
+        "id": str(uuid.uuid4()), "user_id": user["id"], "type": "daily_bonus",
+        "amount": bonus, "status": "completed",
+        "details": {"daily_streak": new_streak},
+        "created_at": now.isoformat()
+    })
+
+    return {"bonus": bonus, "daily_streak": new_streak, "message": f"Claimed {bonus} USDT daily bonus!"}
 
 # ========== REFERRALS ==========
 @api_router.get("/referrals")
@@ -820,6 +1137,36 @@ async def admin_get_stats(user=Depends(get_admin_user)):
         "total_games": total_games,
         "pending_withdrawals": pending_withdrawals
     }
+
+@api_router.post("/admin/users/{user_id}/adjust-balance")
+async def admin_adjust_balance(user_id: str, input: AdminBalanceInput, user=Depends(get_admin_user)):
+    target = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    await db.users.update_one({"id": user_id}, {"$inc": {"balance": input.amount}})
+
+    await db.transactions.insert_one({
+        "id": str(uuid.uuid4()), "user_id": user_id,
+        "type": "admin_adjust",
+        "amount": abs(input.amount), "status": "completed",
+        "details": {"reason": input.reason, "adjusted_by": user["id"], "direction": "credit" if input.amount > 0 else "debit"},
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+
+    return {"status": "ok", "new_balance": (target.get("balance", 0) + input.amount)}
+
+@api_router.post("/admin/users/{user_id}/ban")
+async def admin_ban_user(user_id: str, user=Depends(get_admin_user)):
+    target = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target.get("role") == "admin":
+        raise HTTPException(status_code=400, detail="Cannot ban admin")
+
+    new_status = not target.get("banned", False)
+    await db.users.update_one({"id": user_id}, {"$set": {"banned": new_status}})
+    return {"status": "banned" if new_status else "unbanned"}
 
 # ========== EMAIL NOTIFICATIONS (MOCK) ==========
 async def send_notification(user_id: str, email: str, notif_type: str, subject: str, body: str):
