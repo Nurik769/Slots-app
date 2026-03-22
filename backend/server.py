@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import jwt
 import bcrypt
 import asyncio
@@ -356,6 +356,11 @@ async def register(input: RegisterInput, request: Request):
                 "details": {"referred_user": input.username},
                 "created_at": datetime.now(timezone.utc).isoformat()
             })
+            await send_notification(
+                referrer["id"], referrer["email"], "referral_bonus",
+                "Referral Bonus Received",
+                f"You earned {REFERRAL_BONUS} USDT! {input.username} joined using your referral code."
+            )
 
     await db.users.insert_one(user)
     token = create_token(user_id, "user")
@@ -713,6 +718,15 @@ async def admin_approve_withdrawal(withdrawal_id: str, user=Depends(get_admin_us
         {"details.withdrawal_id": withdrawal_id},
         {"$set": {"status": "approved"}}
     )
+
+    w_user = await db.users.find_one({"id": withdrawal["user_id"]}, {"_id": 0})
+    if w_user:
+        await send_notification(
+            w_user["id"], w_user["email"], "withdrawal_approved",
+            "Withdrawal Approved",
+            f"Your withdrawal of {withdrawal['amount']} USDT to {withdrawal['address']} has been approved."
+        )
+
     return {"status": "approved"}
 
 @api_router.post("/admin/withdrawals/{withdrawal_id}/reject")
@@ -759,6 +773,15 @@ async def admin_confirm_deposit(deposit_id: str, user=Depends(get_admin_user)):
         {"details.deposit_id": deposit_id},
         {"$set": {"status": "confirmed"}}
     )
+
+    dep_user = await db.users.find_one({"id": deposit["user_id"]}, {"_id": 0})
+    if dep_user:
+        await send_notification(
+            dep_user["id"], dep_user["email"], "deposit_confirmed",
+            "Deposit Confirmed",
+            f"Your deposit of {deposit['amount']} USDT has been confirmed by admin."
+        )
+
     return {"status": "confirmed"}
 
 @api_router.get("/admin/stats")
@@ -796,6 +819,103 @@ async def admin_get_stats(user=Depends(get_admin_user)):
         "total_users": total_users,
         "total_games": total_games,
         "pending_withdrawals": pending_withdrawals
+    }
+
+# ========== EMAIL NOTIFICATIONS (MOCK) ==========
+async def send_notification(user_id: str, email: str, notif_type: str, subject: str, body: str):
+    """Mock email notification - stores in DB, logs to console. Replace with real SMTP for production."""
+    notif = {
+        "id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "email": email,
+        "type": notif_type,
+        "subject": subject,
+        "body": body,
+        "sent": True,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.notifications.insert_one(notif)
+    logger.info(f"[EMAIL] To: {email} | Subject: {subject} | Body: {body}")
+
+@api_router.get("/notifications")
+async def get_notifications(user=Depends(get_current_user)):
+    notifs = await db.notifications.find(
+        {"user_id": user["id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(50)
+    return {"notifications": notifs}
+
+# ========== LEADERBOARD ==========
+@api_router.get("/leaderboard")
+async def get_leaderboard():
+    now = datetime.now(timezone.utc)
+    start_of_week = now - timedelta(days=now.weekday())
+    start_of_week = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
+    week_start_iso = start_of_week.isoformat()
+
+    top_winners = await db.games.aggregate([
+        {"$match": {"is_win": True, "user_id": {"$nin": ["seed", "fake"]}}},
+        {"$group": {
+            "_id": "$username",
+            "total_wins": {"$sum": "$win_amount"},
+            "games_won": {"$sum": 1}
+        }},
+        {"$sort": {"total_wins": -1}},
+        {"$limit": 20}
+    ]).to_list(20)
+
+    weekly_winners = await db.games.aggregate([
+        {"$match": {
+            "is_win": True,
+            "user_id": {"$nin": ["seed", "fake"]},
+            "created_at": {"$gte": week_start_iso}
+        }},
+        {"$group": {
+            "_id": "$username",
+            "total_wins": {"$sum": "$win_amount"},
+            "games_won": {"$sum": 1}
+        }},
+        {"$sort": {"total_wins": -1}},
+        {"$limit": 20}
+    ]).to_list(20)
+
+    top_profit_raw = await db.transactions.aggregate([
+        {"$match": {"type": {"$in": ["win", "bet"]}}},
+        {"$group": {
+            "_id": "$user_id",
+            "total_wins": {"$sum": {"$cond": [{"$eq": ["$type", "win"]}, "$amount", 0]}},
+            "total_bets": {"$sum": {"$cond": [{"$eq": ["$type", "bet"]}, "$amount", 0]}}
+        }},
+        {"$project": {
+            "profit": {"$subtract": ["$total_wins", "$total_bets"]},
+            "total_wins": 1,
+            "total_bets": 1
+        }},
+        {"$sort": {"profit": -1}},
+        {"$limit": 20}
+    ]).to_list(20)
+
+    top_profit = []
+    for entry in top_profit_raw:
+        u = await db.users.find_one({"id": entry["_id"]}, {"_id": 0, "username": 1})
+        if u:
+            top_profit.append({
+                "username": u["username"],
+                "profit": entry["profit"],
+                "total_wins": entry["total_wins"],
+                "total_bets": entry["total_bets"]
+            })
+
+    return {
+        "top_winners": [
+            {"username": w["_id"], "total_wins": w["total_wins"], "games_won": w["games_won"]}
+            for w in top_winners
+        ],
+        "weekly_winners": [
+            {"username": w["_id"], "total_wins": w["total_wins"], "games_won": w["games_won"]}
+            for w in weekly_winners
+        ],
+        "top_profit": top_profit,
+        "week_start": week_start_iso
     }
 
 # ========== SEED ==========
@@ -903,6 +1023,14 @@ async def trongrid_worker():
                             {"$set": {"status": "confirmed"}}
                         )
                         logger.info(f"TronGrid: Auto-confirmed deposit {deposit['id']} for {value} USDT (tx: {tx_id})")
+
+                        dep_user = await db.users.find_one({"id": deposit["user_id"]}, {"_id": 0})
+                        if dep_user:
+                            await send_notification(
+                                dep_user["id"], dep_user["email"], "deposit_confirmed",
+                                "Deposit Confirmed",
+                                f"Your deposit of {value} USDT has been confirmed automatically. TX: {tx_id}"
+                            )
 
                     processed_txs.add(tx_id)
                     await db.processed_txs.insert_one({

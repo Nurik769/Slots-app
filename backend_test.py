@@ -446,6 +446,198 @@ class CryptoPlayAPITester:
                 description="Confirm pending deposit"
             )
 
+    def test_new_features_iteration2(self):
+        """Test new features added in iteration 2"""
+        self.log("=== TESTING NEW FEATURES (ITERATION 2) ===")
+        
+        # Test leaderboard endpoint (public, no auth required)
+        success, response = self.run_test(
+            "Get Leaderboard",
+            "GET",
+            "leaderboard",
+            200,
+            description="Get leaderboard data with top_winners, weekly_winners, top_profit, week_start"
+        )
+        if success:
+            required_keys = ['top_winners', 'weekly_winners', 'top_profit', 'week_start']
+            missing_keys = [key for key in required_keys if key not in response]
+            if missing_keys:
+                self.log(f"❌ Leaderboard missing keys: {missing_keys}")
+            else:
+                self.log("✅ Leaderboard contains all required keys")
+
+        # Test notifications endpoint (requires auth)
+        if self.demo_token:
+            self.run_test(
+                "Get Notifications",
+                "GET",
+                "notifications",
+                200,
+                token=self.demo_token,
+                description="Get user notifications list"
+            )
+
+        # Test notifications endpoint without auth (should fail)
+        self.run_test(
+            "Get Notifications (No Auth)",
+            "GET",
+            "notifications",
+            401,
+            description="Should fail without authentication"
+        )
+
+        # Test referral bonus notification trigger
+        if self.demo_token:
+            # Get demo user's referral code first
+            success, user_data = self.run_test(
+                "Get Demo User Profile",
+                "GET",
+                "auth/me",
+                200,
+                token=self.demo_token,
+                description="Get demo user referral code"
+            )
+            
+            if success and 'referral_code' in user_data:
+                referral_code = user_data['referral_code']
+                test_email = f"referral_test_{datetime.now().strftime('%H%M%S')}@test.com"
+                
+                # Register new user with referral code
+                success, response = self.run_test(
+                    "Register with Referral Code",
+                    "POST",
+                    "auth/register",
+                    200,
+                    data={
+                        "email": test_email,
+                        "username": f"ReferralUser_{datetime.now().strftime('%H%M%S')}",
+                        "password": "testpass123",
+                        "referral_code": referral_code
+                    },
+                    description="Register user with referral code to trigger notification"
+                )
+                
+                if success:
+                    # Check if notification was created for referrer
+                    self.run_test(
+                        "Check Referral Notifications",
+                        "GET",
+                        "notifications",
+                        200,
+                        token=self.demo_token,
+                        description="Check if referral bonus notification was created"
+                    )
+
+        # Test withdrawal approval notification
+        if self.admin_token and self.test_user_token:
+            # First, create a withdrawal request
+            success, response = self.run_test(
+                "Create Test Withdrawal",
+                "POST",
+                "wallet/withdraw",
+                200,
+                data={"amount": 5.0, "address": "TTestWithdrawAddress123"},
+                token=self.test_user_token,
+                description="Create withdrawal for notification test"
+            )
+            
+            if success:
+                withdrawal_id = response.get('withdrawal_id')
+                if withdrawal_id:
+                    # Approve the withdrawal as admin
+                    self.run_test(
+                        "Approve Withdrawal (Notification Test)",
+                        "POST",
+                        f"admin/withdrawals/{withdrawal_id}/approve",
+                        200,
+                        token=self.admin_token,
+                        description="Approve withdrawal to trigger notification"
+                    )
+                    
+                    # Check if notification was created
+                    self.run_test(
+                        "Check Withdrawal Approval Notifications",
+                        "GET",
+                        "notifications",
+                        200,
+                        token=self.test_user_token,
+                        description="Check if withdrawal approval notification was created"
+                    )
+
+        # Test PVP join returns 'active' status
+        if self.demo_token and self.test_user_token:
+            # Create lobby with demo user
+            success, response = self.run_test(
+                "Create PVP Lobby for Join Test",
+                "POST",
+                "games/pvp/create",
+                200,
+                data={"bet_amount": 5.0},
+                token=self.demo_token,
+                description="Create PVP lobby for join test"
+            )
+            
+            if success:
+                lobby_id = response.get('lobby_id')
+                if lobby_id:
+                    # Join with test user
+                    success, join_response = self.run_test(
+                        "Join PVP Lobby",
+                        "POST",
+                        f"games/pvp/join/{lobby_id}",
+                        200,
+                        token=self.test_user_token,
+                        description="Join PVP lobby and check status becomes 'active'"
+                    )
+                    
+                    if success and join_response.get('status') == 'active':
+                        self.log("✅ PVP join correctly returns 'active' status")
+                    else:
+                        self.log(f"❌ PVP join status: {join_response.get('status')} (expected 'active')")
+
+        # Test dice game still works with 5 USDT bet
+        if self.demo_token:
+            success, response = self.run_test(
+                "Dice Game 5 USDT Bet",
+                "POST",
+                "games/dice/play",
+                200,
+                data={"bet_amount": 5.0},
+                token=self.demo_token,
+                description="Verify dice game works with 5 USDT bet"
+            )
+            
+            # Verify win chance is around 48% by checking multiple games
+            win_count = 0
+            total_games = 10
+            for i in range(total_games):
+                success, game_response = self.run_test(
+                    f"Dice Game Test {i+1}/10",
+                    "POST",
+                    "games/dice/play",
+                    200,
+                    data={"bet_amount": 5.0},
+                    token=self.demo_token,
+                    description=f"Test dice game {i+1} for win rate verification"
+                )
+                if success and game_response.get('is_win'):
+                    win_count += 1
+            
+            win_rate = (win_count / total_games) * 100
+            self.log(f"📊 Dice win rate over {total_games} games: {win_rate}% (expected ~48%)")
+
+        # Test PVP create still works
+        if self.demo_token:
+            self.run_test(
+                "PVP Create Verification",
+                "POST",
+                "games/pvp/create",
+                200,
+                data={"bet_amount": 5.0},
+                token=self.demo_token,
+                description="Verify PVP create still works"
+            )
+
     def run_all_tests(self):
         """Run complete test suite"""
         self.log("🚀 Starting CryptoPlay API Test Suite")
@@ -465,6 +657,9 @@ class CryptoPlayAPITester:
         self.test_referrals()
         deposits = self.test_admin_endpoints()
         self.test_admin_actions(deposits)
+        
+        # Test new features for iteration 2
+        self.test_new_features_iteration2()
         
         # Print results
         end_time = datetime.now()

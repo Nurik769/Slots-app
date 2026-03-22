@@ -6,8 +6,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { motion } from 'framer-motion';
-import { ArrowDownRight, ArrowUpRight, Copy, Loader2, Check } from 'lucide-react';
+import { ArrowDownRight, ArrowUpRight, Copy, Loader2, Check, QrCode } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 
 const DEPOSIT_ADDRESS = 'TTHqZYyEvMSCH1LsPGCQkpdcncp3iiGC4F';
 
@@ -21,6 +23,7 @@ export default function Wallet() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showQR, setShowQR] = useState(false);
 
   const fetchTransactions = useCallback(async () => {
     try {
@@ -138,6 +141,15 @@ export default function Wallet() {
                         data-testid="copy-address-btn"
                       >
                         {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4 text-[#94a3b8]" />}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="border-white/10 shrink-0"
+                        onClick={() => setShowQR(true)}
+                        data-testid="show-qr-btn"
+                      >
+                        <QrCode className="w-4 h-4 text-[#94a3b8]" />
                       </Button>
                     </div>
                   </div>
@@ -262,6 +274,53 @@ export default function Wallet() {
             )}
           </div>
         </div>
+        {/* QR Code Modal */}
+        <Dialog open={showQR} onOpenChange={setShowQR}>
+          <DialogContent className="bg-[#111113] border-white/10 text-white max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="font-['Unbounded'] text-center text-base">Deposit USDT (TRC-20)</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-5 py-4">
+              <div className="flex justify-center">
+                <div className="bg-white p-4 rounded-2xl" data-testid="qr-code">
+                  <QRCodeSVG
+                    value={DEPOSIT_ADDRESS}
+                    size={200}
+                    level="H"
+                    bgColor="#ffffff"
+                    fgColor="#050505"
+                  />
+                </div>
+              </div>
+
+              <div className="text-center space-y-2">
+                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                  <div className="w-2 h-2 rounded-full bg-emerald-400" />
+                  <span className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">TRC-20 Network</span>
+                </div>
+                <p className="text-xs text-amber-400 font-medium">Send USDT (TRC-20) only to this address</p>
+                <p className="text-[10px] text-red-400">Sending other tokens will result in permanent loss</p>
+              </div>
+
+              <div className="bg-[#0a0a0b] border border-white/10 rounded-xl p-3">
+                <code className="font-mono text-xs text-emerald-400 break-all block text-center">{DEPOSIT_ADDRESS}</code>
+              </div>
+
+              <Button
+                className="w-full bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl"
+                onClick={() => { copyAddress(); setShowQR(false); }}
+                data-testid="qr-copy-btn"
+              >
+                <Copy className="w-4 h-4 mr-2" /> Copy Address
+              </Button>
+
+              <p className="text-[10px] text-[#555] text-center">
+                Deposits are auto-confirmed via blockchain or manually by admin.
+                Min processing time: ~30 seconds.
+              </p>
+            </div>
+          </DialogContent>
+        </Dialog>
       </motion.div>
     </div>
   );

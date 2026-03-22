@@ -11,6 +11,7 @@ import PvpCards from "@/pages/PvpCards";
 import Wallet from "@/pages/Wallet";
 import Referrals from "@/pages/Referrals";
 import Admin from "@/pages/Admin";
+import Leaderboard from "@/pages/Leaderboard";
 import { useEffect } from "react";
 
 // Service Worker Registration
@@ -59,6 +60,7 @@ function AppRoutes() {
       <Route path="/games/pvp" element={<ProtectedRoute><Layout><PvpCards /></Layout></ProtectedRoute>} />
       <Route path="/wallet" element={<ProtectedRoute><Layout><Wallet /></Layout></ProtectedRoute>} />
       <Route path="/referrals" element={<ProtectedRoute><Layout><Referrals /></Layout></ProtectedRoute>} />
+      <Route path="/leaderboard" element={<ProtectedRoute><Layout><Leaderboard /></Layout></ProtectedRoute>} />
       <Route path="/admin" element={<ProtectedRoute adminOnly><Layout><Admin /></Layout></ProtectedRoute>} />
     </Routes>
   );

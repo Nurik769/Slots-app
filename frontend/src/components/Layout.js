@@ -1,6 +1,6 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
-import { Dice5, Swords, WalletCards, Users, LayoutDashboard, ShieldCheck, LogOut, Menu, X } from 'lucide-react';
+import { Dice5, Swords, WalletCards, Users, LayoutDashboard, ShieldCheck, LogOut, Menu, X, Trophy } from 'lucide-react';
 import { useState } from 'react';
 import LiveActivity from '@/components/LiveActivity';
 
@@ -9,6 +9,7 @@ const navItems = [
   { path: '/games/dice', label: 'Dice', icon: Dice5 },
   { path: '/games/pvp', label: 'PVP Cards', icon: Swords },
   { path: '/wallet', label: 'Wallet', icon: WalletCards },
+  { path: '/leaderboard', label: 'Leaders', icon: Trophy },
   { path: '/referrals', label: 'Referrals', icon: Users },
 ];
 
