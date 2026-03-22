@@ -2,7 +2,7 @@
   "version": 2,
   "builds": [
     {
-      "src": "backend/api/*.js",
+      "src": "backend/*.js",
       "use": "@vercel/node"
     },
     {
@@ -12,9 +12,9 @@
     }
   ],
   "rewrites": [
-    { "source": "/api/register", "destination": "/backend/api/register.js" },
-    { "source": "/api/login", "destination": "/backend/api/login.js" },
-    { "source": "/api/user", "destination": "/backend/api/user.js" },
+    { "source": "/api/register", "destination": "/backend/register.js" },
+    { "source": "/api/login", "destination": "/backend/login.js" },
+    { "source": "/api/user", "destination": "/backend/user.js" },
     { "source": "/(.*)", "destination": "/frontend/$1" }
   ]
 }
