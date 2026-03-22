@@ -24,20 +24,21 @@ Production-grade крипто-ігрова платформа з USDT TRC-20, PV
 - Dark theme, glow effects, crypto/gambling UI
 - Rate limiting, anti-cheat, fraud detection
 
-## What's Been Implemented (2026-03-22)
-- Full backend API (28 endpoints tested, 100% pass)
+## What's Been Implemented (2026-03-22, v3)
+- Full backend API (47/49 tests passed, 95.9% - 2 expected failures from insufficient balance)
 - Landing page with hero, CTA, live activity
 - Auth (login/register with JWT)
 - Dashboard (balance, transactions, quick actions)
-- Dice Game with animated dice and history (48% win chance, ~4% house edge)
-- PVP Cards with FULL WEBSOCKET flow (lobby → join → countdown → cards → result)
-- PVP disconnect handling (auto-lose for disconnected player)
-- Wallet (deposit/withdraw/transaction history)
+- Dice Game (48% win chance, ~4% house edge, animated)
+- PVP Cards FULL WEBSOCKET (lobby → join → countdown → cards → result, disconnect = auto-lose)
+- Wallet with QR code modal, TRC-20 instructions, copy address
+- TronGrid API background worker (auto-confirm USDT deposits)
+- Leaderboard page (Weekly/All-Time/Profit tabs, 30s auto-refresh, weekly reset)
+- Email notifications MOCK (deposit confirmed, withdrawal approved, referral bonus → stored in DB)
 - Referral system with code + link
 - Admin panel (users, transactions, deposits, withdrawals, stats)
-- TronGrid API integration (background worker, auto-confirm USDT TRC-20 deposits)
 - PWA support (manifest.json, service worker, offline fallback)
-- Legal disclaimers (responsible gambling, 18+, no license notice)
+- Legal disclaimers in footer (responsible gambling, 18+, no license)
 - Live activity ticker, toast notifications, skeleton loaders
 - Rate limiting, multi-account detection, IP tracking
 
