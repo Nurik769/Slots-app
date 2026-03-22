@@ -11,6 +11,16 @@ import PvpCards from "@/pages/PvpCards";
 import Wallet from "@/pages/Wallet";
 import Referrals from "@/pages/Referrals";
 import Admin from "@/pages/Admin";
+import { useEffect } from "react";
+
+// Service Worker Registration
+function registerSW() {
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    });
+  }
+}
 
 function ProtectedRoute({ children, adminOnly = false }) {
   const { user, loading } = useAuth();
@@ -55,6 +65,8 @@ function AppRoutes() {
 }
 
 function App() {
+  useEffect(() => { registerSW(); }, []);
+
   return (
     <BrowserRouter>
       <AuthProvider>

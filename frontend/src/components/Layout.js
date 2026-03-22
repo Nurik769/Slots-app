@@ -151,15 +151,24 @@ export default function Layout({ children }) {
 
       {/* Footer */}
       <footer className="border-t border-white/5 py-8 px-4" data-testid="app-footer">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <Dice5 className="w-4 h-4 text-emerald-400" />
-            <span className="font-['Unbounded'] text-sm text-white">CryptoPlay</span>
+        <div className="max-w-7xl mx-auto">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mb-4">
+            <div className="flex items-center gap-2">
+              <Dice5 className="w-4 h-4 text-emerald-400" />
+              <span className="font-['Unbounded'] text-sm text-white">CryptoPlay</span>
+            </div>
+            <p className="text-xs text-[#94a3b8]">
+              Support: <a href="mailto:dailyessentials532@gmail.com" className="text-emerald-400 hover:underline" data-testid="footer-email">dailyessentials532@gmail.com</a>
+            </p>
+            <p className="text-xs text-[#94a3b8]">&copy; 2026 CryptoPlay. All rights reserved.</p>
           </div>
-          <p className="text-xs text-[#94a3b8]">
-            Support: <a href="mailto:dailyessentials532@gmail.com" className="text-emerald-400 hover:underline" data-testid="footer-email">dailyessentials532@gmail.com</a>
-          </p>
-          <p className="text-xs text-[#94a3b8]">&copy; 2026 CryptoPlay. All rights reserved.</p>
+          <div className="border-t border-white/5 pt-4">
+            <p className="text-[10px] text-[#555] text-center leading-relaxed max-w-2xl mx-auto" data-testid="footer-disclaimer">
+              This platform is for entertainment purposes only. Cryptocurrency gambling may be restricted in your jurisdiction.
+              Please gamble responsibly and never bet more than you can afford to lose. Users must be 18+ to participate.
+              This service does not hold a gambling license. Use at your own risk.
+            </p>
+          </div>
         </div>
       </footer>
     </div>

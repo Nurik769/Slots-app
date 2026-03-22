@@ -264,7 +264,7 @@ export default function DiceGame() {
                   </Button>
 
                   <p className="text-center text-xs text-[#555]">
-                    Win chance: 10% | Payout: 2x | Min bet: 5 USDT
+                    Win chance: 48% | Payout: 2x | Min bet: 5 USDT | House edge: ~4%
                   </p>
                 </div>
               </div>

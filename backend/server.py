@@ -16,6 +16,8 @@ from typing import List, Optional, Dict
 from datetime import datetime, timezone
 import jwt
 import bcrypt
+import asyncio
+import requests as sync_requests
 from collections import defaultdict
 
 ROOT_DIR = Path(__file__).parent
@@ -34,8 +36,13 @@ JWT_EXPIRY = 86400 * 7
 # Constants
 DEPOSIT_ADDRESS = "TTHqZYyEvMSCH1LsPGCQkpdcncp3iiGC4F"
 MIN_BET = 5.0
-DICE_WIN_CHANCE = 0.10
+DICE_WIN_CHANCE = 0.48  # 48% win chance (casino-like, ~4% house edge)
 REFERRAL_BONUS = 1.0
+
+# TronGrid Config
+TRONGRID_API = "https://api.trongrid.io"
+USDT_CONTRACT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+PVP_DISCONNECT_TIMEOUT = 30
 
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
@@ -45,32 +52,176 @@ rate_limit_store = defaultdict(list)
 RATE_LIMIT_WINDOW = 60
 RATE_LIMIT_MAX = 300
 
-# ========== WEBSOCKET MANAGER ==========
-class ConnectionManager:
+# ========== PVP GAME MANAGER ==========
+class PvpGameManager:
     def __init__(self):
-        self.active_connections: Dict[str, List[WebSocket]] = {}
+        self.connections: Dict[str, Dict[str, dict]] = {}
+        self.game_tasks: Dict[str, asyncio.Task] = {}
 
-    async def connect(self, lobby_id: str, websocket: WebSocket):
+    async def connect(self, lobby_id: str, user_id: str, username: str, websocket: WebSocket):
         await websocket.accept()
-        if lobby_id not in self.active_connections:
-            self.active_connections[lobby_id] = []
-        self.active_connections[lobby_id].append(websocket)
+        if lobby_id not in self.connections:
+            self.connections[lobby_id] = {}
+        self.connections[lobby_id][user_id] = {"ws": websocket, "username": username}
 
-    def disconnect(self, lobby_id: str, websocket: WebSocket):
-        if lobby_id in self.active_connections:
-            self.active_connections[lobby_id] = [
-                ws for ws in self.active_connections[lobby_id] if ws != websocket
-            ]
+        await self.broadcast(lobby_id, {
+            "type": "player_joined",
+            "user_id": user_id,
+            "username": username,
+            "player_count": len(self.connections[lobby_id])
+        })
+
+        lobby = await db.pvp_lobbies.find_one({"id": lobby_id}, {"_id": 0})
+        if lobby and lobby["status"] == "active" and len(self.connections[lobby_id]) >= 2:
+            if lobby_id not in self.game_tasks:
+                task = asyncio.create_task(self.run_game(lobby_id))
+                self.game_tasks[lobby_id] = task
 
     async def broadcast(self, lobby_id: str, message: dict):
-        if lobby_id in self.active_connections:
-            for ws in self.active_connections[lobby_id]:
-                try:
-                    await ws.send_json(message)
-                except Exception:
-                    pass
+        if lobby_id not in self.connections:
+            return
+        dead = []
+        for uid, info in self.connections[lobby_id].items():
+            try:
+                await info["ws"].send_json(message)
+            except Exception:
+                dead.append(uid)
+        for uid in dead:
+            self.connections[lobby_id].pop(uid, None)
 
-manager = ConnectionManager()
+    async def run_game(self, lobby_id: str):
+        try:
+            lobby = await db.pvp_lobbies.find_one({"id": lobby_id}, {"_id": 0})
+            if not lobby or lobby["status"] != "active":
+                return
+
+            players = lobby["players"]
+            if len(players) < 2:
+                return
+
+            for i in range(3, 0, -1):
+                await self.broadcast(lobby_id, {"type": "countdown", "seconds": i})
+                await asyncio.sleep(1)
+
+            card_names = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"]
+            suits = ["hearts", "diamonds", "clubs", "spades"]
+
+            c1_val = random.randint(0, 12)
+            c2_val = random.randint(0, 12)
+            while c1_val == c2_val:
+                c2_val = random.randint(0, 12)
+
+            c1 = {"value": c1_val, "name": card_names[c1_val], "suit": random.choice(suits)}
+            c2 = {"value": c2_val, "name": card_names[c2_val], "suit": random.choice(suits)}
+
+            p1, p2 = players[0], players[1]
+            winner_id = p1["id"] if c1_val > c2_val else p2["id"]
+            winner_username = p1["username"] if c1_val > c2_val else p2["username"]
+            total_pot = lobby["bet_amount"] * 2
+
+            await self.broadcast(lobby_id, {
+                "type": "cards_dealt",
+                "players": {
+                    p1["id"]: {"username": p1["username"], "card": c1},
+                    p2["id"]: {"username": p2["username"], "card": c2}
+                }
+            })
+
+            await asyncio.sleep(2)
+
+            await db.users.update_one({"id": winner_id}, {"$inc": {"balance": total_pot}})
+
+            game_result = {
+                "creator": {"username": p1["username"], "card": c1},
+                "joiner": {"username": p2["username"], "card": c2},
+                "winner_id": winner_id,
+                "winner_username": winner_username,
+                "total_pot": total_pot
+            }
+
+            await db.pvp_lobbies.update_one(
+                {"id": lobby_id},
+                {"$set": {"status": "finished", "winner_id": winner_id, "result": game_result}}
+            )
+
+            await db.transactions.insert_one({
+                "id": str(uuid.uuid4()), "user_id": winner_id, "type": "win",
+                "amount": total_pot, "status": "completed",
+                "details": {"game_id": lobby_id, "game": "pvp_cards"},
+                "created_at": datetime.now(timezone.utc).isoformat()
+            })
+
+            await db.games.insert_one({
+                "id": lobby_id, "type": "pvp_cards",
+                "players": [p1["id"], p2["id"]],
+                "usernames": [p1["username"], p2["username"]],
+                "bet_amount": lobby["bet_amount"],
+                "winner_id": winner_id, "winner_username": winner_username,
+                "result": game_result, "is_win": True, "win_amount": total_pot,
+                "username": winner_username,
+                "created_at": datetime.now(timezone.utc).isoformat()
+            })
+
+            await self.broadcast(lobby_id, {"type": "game_result", "result": game_result})
+
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"PVP game error for lobby {lobby_id}: {e}")
+        finally:
+            self.game_tasks.pop(lobby_id, None)
+
+    async def handle_disconnect(self, lobby_id: str, user_id: str):
+        if lobby_id in self.connections:
+            self.connections[lobby_id].pop(user_id, None)
+
+        lobby = await db.pvp_lobbies.find_one({"id": lobby_id}, {"_id": 0})
+        if not lobby or lobby["status"] != "active":
+            await self.broadcast(lobby_id, {"type": "player_disconnected", "user_id": user_id})
+            return
+
+        if lobby_id in self.game_tasks:
+            self.game_tasks[lobby_id].cancel()
+            self.game_tasks.pop(lobby_id, None)
+
+        remaining = self.connections.get(lobby_id, {})
+        if remaining:
+            winner_id = list(remaining.keys())[0]
+            winner_info = list(remaining.values())[0]
+            total_pot = lobby["bet_amount"] * 2
+
+            await db.users.update_one({"id": winner_id}, {"$inc": {"balance": total_pot}})
+
+            result = {
+                "winner_id": winner_id,
+                "winner_username": winner_info["username"],
+                "total_pot": total_pot,
+                "reason": "opponent_disconnected"
+            }
+
+            await db.pvp_lobbies.update_one(
+                {"id": lobby_id},
+                {"$set": {"status": "finished", "winner_id": winner_id, "result": result}}
+            )
+
+            await db.transactions.insert_one({
+                "id": str(uuid.uuid4()), "user_id": winner_id, "type": "win",
+                "amount": total_pot, "status": "completed",
+                "details": {"game_id": lobby_id, "game": "pvp_cards", "reason": "opponent_disconnected"},
+                "created_at": datetime.now(timezone.utc).isoformat()
+            })
+
+            await self.broadcast(lobby_id, {
+                "type": "game_result", "result": result, "reason": "opponent_disconnected"
+            })
+        else:
+            await db.pvp_lobbies.update_one(
+                {"id": lobby_id}, {"$set": {"status": "cancelled"}}
+            )
+            for p in lobby["players"]:
+                await db.users.update_one({"id": p["id"]}, {"$inc": {"balance": lobby["bet_amount"]}})
+
+pvp_manager = PvpGameManager()
 
 # ========== PYDANTIC MODELS ==========
 class RegisterInput(BaseModel):
@@ -480,63 +631,15 @@ async def join_pvp_lobby(lobby_id: str, user=Depends(get_current_user)):
         "created_at": datetime.now(timezone.utc).isoformat()
     })
 
-    card_names = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"]
-    suits = ["hearts", "diamonds", "clubs", "spades"]
-
-    creator_card_val = random.randint(0, 12)
-    joiner_card_val = random.randint(0, 12)
-    while creator_card_val == joiner_card_val:
-        joiner_card_val = random.randint(0, 12)
-
-    creator_card = {"value": creator_card_val, "name": card_names[creator_card_val], "suit": random.choice(suits)}
-    joiner_card = {"value": joiner_card_val, "name": card_names[joiner_card_val], "suit": random.choice(suits)}
-
-    winner_id = lobby["creator_id"] if creator_card_val > joiner_card_val else user["id"]
-    winner_username = lobby["creator_username"] if creator_card_val > joiner_card_val else user["username"]
-    total_pot = lobby["bet_amount"] * 2
-
-    await db.users.update_one({"id": winner_id}, {"$inc": {"balance": total_pot}})
-
-    await db.transactions.insert_one({
-        "id": str(uuid.uuid4()), "user_id": winner_id, "type": "win",
-        "amount": total_pot, "status": "completed",
-        "details": {"game_id": lobby_id, "game": "pvp_cards"},
-        "created_at": datetime.now(timezone.utc).isoformat()
-    })
-
-    game_result = {
-        "creator": {"username": lobby["creator_username"], "card": creator_card},
-        "joiner": {"username": user["username"], "card": joiner_card},
-        "winner_id": winner_id,
-        "winner_username": winner_username,
-        "total_pot": total_pot
-    }
-
     await db.pvp_lobbies.update_one(
         {"id": lobby_id},
         {"$set": {
-            "status": "finished",
-            "players": lobby["players"] + [{"id": user["id"], "username": user["username"]}],
-            "winner_id": winner_id,
-            "result": game_result
+            "status": "active",
+            "players": lobby["players"] + [{"id": user["id"], "username": user["username"]}]
         }}
     )
 
-    await db.games.insert_one({
-        "id": lobby_id, "type": "pvp_cards",
-        "players": [lobby["creator_id"], user["id"]],
-        "usernames": [lobby["creator_username"], user["username"]],
-        "bet_amount": lobby["bet_amount"],
-        "winner_id": winner_id, "winner_username": winner_username,
-        "result": game_result,
-        "is_win": True, "win_amount": total_pot,
-        "username": winner_username,
-        "created_at": datetime.now(timezone.utc).isoformat()
-    })
-
-    await manager.broadcast(lobby_id, {"type": "game_result", "result": game_result})
-
-    return game_result
+    return {"lobby_id": lobby_id, "status": "active", "bet_amount": lobby["bet_amount"]}
 
 @api_router.get("/games/pvp/{lobby_id}")
 async def get_pvp_game(lobby_id: str, user=Depends(get_current_user)):
@@ -743,6 +846,80 @@ async def seed_data():
         "demo": {"email": "demo@cryptoplay.io", "password": "demo123"}
     }
 
+# ========== TRONGRID WORKER ==========
+async def trongrid_worker():
+    """Background task to monitor TRC-20 USDT transactions on deposit address"""
+    processed_txs = set()
+
+    existing = await db.processed_txs.find({}, {"_id": 0, "tx_id": 1}).to_list(10000)
+    for tx in existing:
+        processed_txs.add(tx["tx_id"])
+
+    logger.info(f"TronGrid worker started. Monitoring {DEPOSIT_ADDRESS}. {len(processed_txs)} txs already processed.")
+
+    while True:
+        try:
+            url = f"{TRONGRID_API}/v1/accounts/{DEPOSIT_ADDRESS}/transactions/trc20"
+            params = {"only_to": "true", "only_confirmed": "true", "limit": 50}
+
+            def _fetch():
+                return sync_requests.get(url, params=params, timeout=15)
+
+            response = await asyncio.to_thread(_fetch)
+
+            if response.status_code == 200:
+                data = response.json()
+                for tx in data.get("data", []):
+                    tx_id = tx.get("transaction_id")
+                    if not tx_id or tx_id in processed_txs:
+                        continue
+
+                    token_info = tx.get("token_info", {})
+                    if token_info.get("symbol") != "USDT":
+                        continue
+
+                    decimals = int(token_info.get("decimals", 6))
+                    value = int(tx.get("value", 0)) / (10 ** decimals)
+                    if value <= 0:
+                        continue
+
+                    deposit = await db.deposits.find_one(
+                        {"status": "pending", "amount": value},
+                        {"_id": 0},
+                        sort=[("created_at", 1)]
+                    )
+
+                    if deposit:
+                        await db.deposits.update_one(
+                            {"id": deposit["id"]},
+                            {"$set": {"status": "confirmed", "tx_hash": tx_id}}
+                        )
+                        await db.users.update_one(
+                            {"id": deposit["user_id"]},
+                            {"$inc": {"balance": value}}
+                        )
+                        await db.transactions.update_one(
+                            {"details.deposit_id": deposit["id"]},
+                            {"$set": {"status": "confirmed"}}
+                        )
+                        logger.info(f"TronGrid: Auto-confirmed deposit {deposit['id']} for {value} USDT (tx: {tx_id})")
+
+                    processed_txs.add(tx_id)
+                    await db.processed_txs.insert_one({
+                        "tx_id": tx_id,
+                        "amount": value,
+                        "from": tx.get("from", ""),
+                        "matched_deposit": deposit["id"] if deposit else None,
+                        "processed_at": datetime.now(timezone.utc).isoformat()
+                    })
+            else:
+                logger.warning(f"TronGrid API returned {response.status_code}")
+
+        except Exception as e:
+            logger.error(f"TronGrid worker error: {e}")
+
+        await asyncio.sleep(30)
+
 # ========== WEBSOCKET ==========
 @app.websocket("/api/ws/pvp/{lobby_id}")
 async def websocket_pvp(websocket: WebSocket, lobby_id: str):
@@ -761,20 +938,24 @@ async def websocket_pvp(websocket: WebSocket, lobby_id: str):
         await websocket.close(code=4001, reason="Invalid token")
         return
 
-    await manager.connect(lobby_id, websocket)
+    lobby = await db.pvp_lobbies.find_one({"id": lobby_id}, {"_id": 0})
+    if not lobby or lobby["status"] not in ("waiting", "active"):
+        await websocket.close(code=4002, reason="Invalid lobby")
+        return
+
+    if user["id"] not in [p["id"] for p in lobby["players"]]:
+        await websocket.close(code=4003, reason="Not a player in this lobby")
+        return
+
+    await pvp_manager.connect(lobby_id, user["id"], user["username"], websocket)
+
     try:
-        await manager.broadcast(lobby_id, {
-            "type": "player_joined", "username": user["username"]
-        })
         while True:
             data = await websocket.receive_text()
             if data == "ping":
                 await websocket.send_json({"type": "pong"})
     except WebSocketDisconnect:
-        manager.disconnect(lobby_id, websocket)
-        await manager.broadcast(lobby_id, {
-            "type": "player_disconnected", "username": user["username"]
-        })
+        await pvp_manager.handle_disconnect(lobby_id, user["id"])
 
 # ========== SETUP ==========
 app.include_router(api_router)
@@ -792,6 +973,11 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(trongrid_worker())
+    logger.info("TronGrid background worker started")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
